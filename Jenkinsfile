@@ -1,81 +1,94 @@
 pipeline {
-    agent any
+    agent{label 'slave-1' }
+    
     tools{
-        jdk 'jdk17'
         maven 'maven3'
+        jdk 'jdk17'
     }
+    
     environment{
-        SCANNER_HOME= tool 'sonar-scanner'
+        SCANNER_HOME = tool 'sonar-scanner'
     }
 
     stages {
-        stage('git-checkout') {
+        stage('Compile') {
             steps {
-                git 'https://github.com/suhasvrundavan/santa.git'
-            }
-        }
-
-        stage('Code-Compile') {
-            steps {
-               sh "mvn clean compile"
+                sh "mvn compile"
             }
         }
         
-        stage('Unit Tests') {
+        stage('Tests') {
             steps {
-               sh "mvn test"
+                sh "mvn test"
             }
         }
         
-		stage('OWASP Dependency Check') {
+        stage('Sonarqube Analysis') {
             steps {
-               dependencyCheck additionalArguments: ' --scan ./ ', odcInstallation: 'DC'
-                    dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
-            }
-        }
-
-
-        stage('Sonar Analysis') {
-            steps {
-               withSonarQubeEnv('sonar'){
-                   sh ''' $SCANNER_HOME/bin/sonar-scanner -Dsonar.projectName=Santa \
-                   -Dsonar.java.binaries=. \
-                   -Dsonar.projectKey=Santa '''
-               }
-            }
-        }
-
-		 
-        stage('Code-Build') {
-            steps {
-               sh "mvn clean package"
-            }
-        }
-
-         stage('Docker Build') {
-            steps {
-               script{
-                   withDockerRegistry(credentialsId: 'docker-cred') {
-                    sh "docker build -t  santa123 . "
-                 }
-               }
-            }
-        }
-
-        stage('Docker Push') {
-            steps {
-               script{
-                   withDockerRegistry(credentialsId: 'docker-cred') {
-                    sh "docker tag santa123 adijaiswal/santa123:latest"
-                    sh "docker push adijaiswal/santa123:latest"
-                 }
-               }
+                withSonarQubeEnv('sonar') {
+                    sh ''' $SCANNER_HOME/bin/sonar-scanner -Dsonar.projectName=santa \
+                    -Dsonar.java.binaries=. \
+                    -Dsonar.projectKey=santa '''
+                }
             }
         }
         
-        	 
-		
-		
-
+        
+        stage('Build Application') {
+            steps {
+                sh "mvn package"
+            }
+        }
+        
+        stage('Build Docker Image') {
+            steps {
+                script {
+                    withDockerRegistry(credentialsId: 'docker', toolName: 'docker-1' ) {
+                        sh "docker build -t santa:latest ."
+                    }
+                }
+            }
+        }
+        
+        stage('Tag & Push Docker Image') {
+            steps {
+                script {
+                    withDockerRegistry(credentialsId: 'docker', toolName: 'docker-1' ) {
+                        sh "docker tag santa:latest suhasjv9/santa:latest"
+                        sh "docker push suhasjv9/santa:latest"
+                    }
+                }
+            }
+        }
+        
+        stage('Deploy Application') {
+            steps {
+                script {
+                    withDockerRegistry(credentialsId: 'docker', toolName: 'docker-1' ) {
+                        sh "docker run -d -p 8081:8080 suhasjv9/santa:latest"
+                    }
+                }
+            }
+        }
+        
+    }
     
+    post {
+        always{
+            emailext(
+                subject: "Pipeline Status: ${BUILD_NUMBER}",
+                body: ''' <html>
+                            <body>
+                                <p> Build Status: ${BUILD_STATUS}</p>
+                                <p> Build Number: ${BUILD_NUMBER}</p>
+                                <p> Check the <a href="${BUILD_URL}"> console output</a>.</p>
+                            </body>
+                          </html> ''',
+                to: 'xz86627@gmail.com',
+                from: 'jenkins@example.com',
+                replyTo: 'jenkins@example.com',
+                mimeType: 'text/html'
+                )
+        }
+    }
 }
